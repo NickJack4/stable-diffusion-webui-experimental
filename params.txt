@@ -1,0 +1,2 @@
+sillyboitomyoungface at a gay bar
+Steps: 47, Sampler: Euler a, CFG scale: 10, Seed: 234107203, Size: 512x512, Model hash: f9746641, Model: sillyboitomyoungface, Batch size: 8, Batch pos: 0
