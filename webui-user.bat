@@ -3,7 +3,6 @@
 set PYTHON=
 set GIT=
 set VENV_DIR=
-set COMMANDLINE_ARGS=--xformers --enable-console-prompts --autolaunch
-set ACCELERATE=
+set COMMANDLINE_ARGS=
 
 call webui.bat

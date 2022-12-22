@@ -8,8 +8,8 @@ function set_theme(theme){
 }
 
 function selected_gallery_index(){
-    var buttons = gradioApp().querySelectorAll('[style="display: block;"].tabitem .gallery-item')
-    var button = gradioApp().querySelector('[style="display: block;"].tabitem .gallery-item.\\!ring-2')
+    var buttons = gradioApp().querySelectorAll('[style="display: block;"].tabitem div[id$=_gallery] .gallery-item')
+    var button = gradioApp().querySelector('[style="display: block;"].tabitem div[id$=_gallery] .gallery-item.\\!ring-2')
 
     var result = -1
     buttons.forEach(function(v, i){ if(v==button) { result = i } })
@@ -129,6 +129,15 @@ function submit_img2img(){
 function ask_for_style_name(_, prompt_text, negative_prompt_text) {
     name_ = prompt('Style name:')
     return [name_, prompt_text, negative_prompt_text]
+}
+
+function confirm_clear_prompt(prompt, negative_prompt) {
+    if(confirm("Delete prompt?")) {
+        prompt = ""
+        negative_prompt = ""
+    }
+
+    return [prompt, negative_prompt]
 }
 
 

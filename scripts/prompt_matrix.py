@@ -46,10 +46,11 @@ class Script(scripts.Script):
 
     def ui(self, is_img2img):
         put_at_start = gr.Checkbox(label='Put variable parts at start of prompt', value=False)
+        different_seeds = gr.Checkbox(label='Use different seed for each picture', value=False)
 
-        return [put_at_start]
+        return [put_at_start, different_seeds]
 
-    def run(self, p, put_at_start):
+    def run(self, p, put_at_start, different_seeds):
         modules.processing.fix_seed(p)
 
         original_prompt = p.prompt[0] if type(p.prompt) == list else p.prompt
@@ -73,7 +74,7 @@ class Script(scripts.Script):
         print(f"Prompt matrix will create {len(all_prompts)} images using a total of {p.n_iter} batches.")
 
         p.prompt = all_prompts
-        p.seed = [p.seed for _ in all_prompts]
+        p.seed = [p.seed + (i if different_seeds else 0) for i in range(len(all_prompts))]
         p.prompt_for_display = original_prompt
         processed = process_images(p)
 
@@ -84,6 +85,6 @@ class Script(scripts.Script):
         processed.infotexts.insert(0, processed.infotexts[0])
 
         if opts.grid_save:
-            images.save_image(processed.images[0], p.outpath_grids, "prompt_matrix", prompt=original_prompt, seed=processed.seed, grid=True, p=p)
+            images.save_image(processed.images[0], p.outpath_grids, "prompt_matrix", extension=opts.grid_format, prompt=original_prompt, seed=processed.seed, grid=True, p=p)
 
         return processed

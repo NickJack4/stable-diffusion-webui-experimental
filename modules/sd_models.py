@@ -5,7 +5,11 @@ import gc
 from collections import namedtuple
 import torch
 import re
+import safetensors.torch
 from omegaconf import OmegaConf
+from os import mkdir
+from urllib import request
+import ldm.modules.midas as midas
 
 from ldm.util import instantiate_from_config
 
@@ -35,6 +39,7 @@ def setup_model():
         os.makedirs(model_path)
 
     list_models()
+    enable_midas_autodownload()
 
 
 def checkpoint_tiles(): 
@@ -45,7 +50,7 @@ def checkpoint_tiles():
 
 def list_models():
     checkpoints_list.clear()
-    model_list = modelloader.load_models(model_path=model_path, command_path=shared.cmd_opts.ckpt_dir, ext_filter=[".ckpt"])
+    model_list = modelloader.load_models(model_path=model_path, command_path=shared.cmd_opts.ckpt_dir, ext_filter=[".ckpt", ".safetensors"])
 
     def modeltitle(path, shorthash):
         abspath = os.path.abspath(path)
@@ -143,8 +148,8 @@ def transform_checkpoint_dict_key(k):
 
 
 def get_state_dict_from_checkpoint(pl_sd):
-    if "state_dict" in pl_sd:
-        pl_sd = pl_sd["state_dict"]
+    pl_sd = pl_sd.pop("state_dict", pl_sd)
+    pl_sd.pop("state_dict", None)
 
     sd = {}
     for k, v in pl_sd.items():
@@ -157,6 +162,20 @@ def get_state_dict_from_checkpoint(pl_sd):
     pl_sd.update(sd)
 
     return pl_sd
+
+
+def read_state_dict(checkpoint_file, print_global_state=False, map_location=None):
+    _, extension = os.path.splitext(checkpoint_file)
+    if extension.lower() == ".safetensors":
+        pl_sd = safetensors.torch.load_file(checkpoint_file, device=map_location or shared.weight_load_location)
+    else:
+        pl_sd = torch.load(checkpoint_file, map_location=map_location or shared.weight_load_location)
+
+    if print_global_state and "global_step" in pl_sd:
+        print(f"Global Step: {pl_sd['global_step']}")
+
+    sd = get_state_dict_from_checkpoint(pl_sd)
+    return sd
 
 
 def load_model_weights(model, checkpoint_info, vae_file="auto"):
@@ -173,12 +192,7 @@ def load_model_weights(model, checkpoint_info, vae_file="auto"):
         # load from file
         print(f"Loading weights [{sd_model_hash}] from {checkpoint_file}")
 
-        pl_sd = torch.load(checkpoint_file, map_location=shared.weight_load_location)
-        if "global_step" in pl_sd:
-            print(f"Global Step: {pl_sd['global_step']}")
-
-        sd = get_state_dict_from_checkpoint(pl_sd)
-        del pl_sd
+        sd = read_state_dict(checkpoint_file)
         model.load_state_dict(sd, strict=False)
         del sd
         
@@ -213,9 +227,53 @@ def load_model_weights(model, checkpoint_info, vae_file="auto"):
     model.sd_model_checkpoint = checkpoint_file
     model.sd_checkpoint_info = checkpoint_info
 
+    sd_vae.delete_base_vae()
+    sd_vae.clear_loaded_vae()
     vae_file = sd_vae.resolve_vae(checkpoint_file, vae_file=vae_file)
     sd_vae.load_vae(model, vae_file)
 
+
+def enable_midas_autodownload():
+    """
+    Gives the ldm.modules.midas.api.load_model function automatic downloading.
+
+    When the 512-depth-ema model, and other future models like it, is loaded,
+    it calls midas.api.load_model to load the associated midas depth model.
+    This function applies a wrapper to download the model to the correct
+    location automatically.
+    """
+
+    midas_path = os.path.join(models_path, 'midas')
+
+    # stable-diffusion-stability-ai hard-codes the midas model path to
+    # a location that differs from where other scripts using this model look.
+    # HACK: Overriding the path here.
+    for k, v in midas.api.ISL_PATHS.items():
+        file_name = os.path.basename(v)
+        midas.api.ISL_PATHS[k] = os.path.join(midas_path, file_name)
+
+    midas_urls = {
+        "dpt_large": "https://github.com/intel-isl/DPT/releases/download/1_0/dpt_large-midas-2f21e586.pt",
+        "dpt_hybrid": "https://github.com/intel-isl/DPT/releases/download/1_0/dpt_hybrid-midas-501f0c75.pt",
+        "midas_v21": "https://github.com/AlexeyAB/MiDaS/releases/download/midas_dpt/midas_v21-f6b98070.pt",
+        "midas_v21_small": "https://github.com/AlexeyAB/MiDaS/releases/download/midas_dpt/midas_v21_small-70d6b9c8.pt",
+    }
+
+    midas.api.load_model_inner = midas.api.load_model
+
+    def load_model_wrapper(model_type):
+        path = midas.api.ISL_PATHS[model_type]
+        if not os.path.exists(path):
+            if not os.path.exists(midas_path):
+                mkdir(midas_path)
+    
+            print(f"Downloading midas model weights for {model_type} to {path}")
+            request.urlretrieve(midas_urls[model_type], path)
+            print(f"{model_type} downloaded")
+
+        return midas.api.load_model_inner(model_type)
+
+    midas.api.load_model = load_model_wrapper
 
 def load_model(checkpoint_info=None):
     from modules import lowvram, sd_hijack
@@ -243,6 +301,9 @@ def load_model(checkpoint_info=None):
         checkpoint_info = checkpoint_info._replace(config=checkpoint_info.config.replace(".yaml", "-inpainting.yaml"))
 
     do_inpainting_hijack()
+
+    if shared.cmd_opts.no_half:
+        sd_config.model.params.unet_config.params.use_fp16 = False
 
     sd_model = instantiate_from_config(sd_config.model)
     load_model_weights(sd_model, checkpoint_info)
